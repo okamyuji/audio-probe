@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use thiserror::Error;
+use tokio::process::Command;
 use tokio::sync::Semaphore;
 use tracing::{debug, info, warn};
 use walkdir::WalkDir;
@@ -18,6 +19,10 @@ pub enum AudioProbeError {
     FileNotFound { path: PathBuf },
     #[error("Invalid audio file: {path} - {reason}")]
     InvalidAudioFile { path: PathBuf, reason: String },
+    #[error("FFprobe not found. Please install FFmpeg.")]
+    FFprobeNotFound,
+    #[error("FFprobe execution error: {0}")]
+    FFprobeError(String),
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Processing error: {0}")]
@@ -39,6 +44,36 @@ pub struct AudioInfo {
     pub has_video: bool,
     pub metadata: HashMap<String, String>,
     pub processing_time_ms: u64,
+}
+
+// FFprobeのJSON出力構造
+#[derive(Debug, Deserialize)]
+struct FFProbeOutput {
+    format: Option<FFProbeFormat>,
+    streams: Vec<FFProbeStream>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FFProbeFormat {
+    #[allow(dead_code)]
+    filename: String,
+    format_name: String,
+    format_long_name: String,
+    duration: Option<String>,
+    #[allow(dead_code)]
+    size: Option<String>,
+    bit_rate: Option<String>,
+    tags: Option<HashMap<String, String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct FFProbeStream {
+    codec_name: Option<String>,
+    codec_long_name: Option<String>,
+    codec_type: String,
+    sample_rate: Option<String>,
+    channels: Option<i32>,
+    bit_rate: Option<String>,
 }
 
 impl AudioInfo {
@@ -64,14 +99,28 @@ impl AudioInfo {
 pub struct AudioProbe {
     semaphore: Arc<Semaphore>,
     max_concurrent: usize,
+    use_ffprobe: bool,
 }
 
 impl AudioProbe {
-    pub fn new(max_concurrent: usize) -> Result<Self> {
+    pub async fn new(max_concurrent: usize) -> Result<Self> {
+        // ffprobeが利用可能かチェック
+        let use_ffprobe = Self::check_ffprobe().await;
+
         Ok(Self {
             semaphore: Arc::new(Semaphore::new(max_concurrent)),
             max_concurrent,
+            use_ffprobe,
         })
+    }
+
+    async fn check_ffprobe() -> bool {
+        Command::new("ffprobe")
+            .arg("-version")
+            .output()
+            .await
+            .map(|output| output.status.success())
+            .unwrap_or(false)
     }
 
     pub async fn analyze_file(&self, path: PathBuf) -> Result<AudioInfo, AudioProbeError> {
@@ -91,6 +140,145 @@ impl AudioProbe {
             audio_info.file_size = metadata.len();
         }
 
+        if self.use_ffprobe {
+            // FFprobeを使用して実際の解析
+            match self.analyze_with_ffprobe(&path).await {
+                Ok(info) => {
+                    audio_info = info;
+                }
+                Err(e) => {
+                    warn!("FFprobe analysis failed for {:?}: {}", path, e);
+                    // フォールバック：基本的な推定
+                    self.fallback_analysis(&mut audio_info, &path);
+                }
+            }
+        } else {
+            // FFprobeが利用できない場合の推定
+            self.fallback_analysis(&mut audio_info, &path);
+        }
+
+        // デフォルトメタデータの設定
+        if audio_info.metadata.get("title").is_none() {
+            if let Some(file_stem) = path.file_stem() {
+                if let Some(name) = file_stem.to_str() {
+                    audio_info
+                        .metadata
+                        .insert("title".to_string(), name.to_string());
+                }
+            }
+        }
+        if audio_info.metadata.get("artist").is_none() {
+            audio_info
+                .metadata
+                .insert("artist".to_string(), "Unknown Artist".to_string());
+        }
+        if audio_info.metadata.get("album").is_none() {
+            audio_info
+                .metadata
+                .insert("album".to_string(), "Unknown Album".to_string());
+        }
+
+        audio_info.processing_time_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(audio_info)
+    }
+
+    async fn analyze_with_ffprobe(&self, path: &Path) -> Result<AudioInfo, AudioProbeError> {
+        let output = Command::new("ffprobe")
+            .args(&[
+                "-v",
+                "quiet",
+                "-print_format",
+                "json",
+                "-show_format",
+                "-show_streams",
+            ])
+            .arg(path)
+            .output()
+            .await
+            .map_err(|e| {
+                AudioProbeError::FFprobeError(format!("Failed to execute ffprobe: {}", e))
+            })?;
+
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            return Err(AudioProbeError::FFprobeError(format!(
+                "FFprobe failed: {}",
+                error_msg
+            )));
+        }
+
+        let json_str = String::from_utf8_lossy(&output.stdout);
+        let probe_data: FFProbeOutput = serde_json::from_str(&json_str).map_err(|e| {
+            AudioProbeError::Processing(format!("Failed to parse ffprobe output: {}", e))
+        })?;
+
+        let mut audio_info = AudioInfo::new(path.to_path_buf());
+
+        // ファイルサイズ取得
+        if let Ok(metadata) = std::fs::metadata(path) {
+            audio_info.file_size = metadata.len();
+        }
+
+        // フォーマット情報
+        if let Some(format) = probe_data.format {
+            audio_info.format_name = format.format_name;
+            audio_info.format_long_name = format.format_long_name;
+
+            if let Some(duration_str) = format.duration {
+                audio_info.duration_seconds = duration_str.parse::<f64>().unwrap_or(0.0);
+            }
+
+            if let Some(bit_rate_str) = format.bit_rate {
+                audio_info.bit_rate = bit_rate_str.parse::<i64>().unwrap_or(0);
+            }
+
+            // メタデータ
+            if let Some(tags) = format.tags {
+                for (key, value) in tags {
+                    audio_info.metadata.insert(key.to_lowercase(), value);
+                }
+            }
+        }
+
+        // ストリーム情報
+        let mut audio_stream = None;
+        for stream in probe_data.streams {
+            if stream.codec_type == "audio" && audio_stream.is_none() {
+                audio_stream = Some(stream);
+            } else if stream.codec_type == "video" {
+                audio_info.has_video = true;
+            }
+        }
+
+        if let Some(stream) = audio_stream {
+            if let Some(codec_name) = stream.codec_name {
+                audio_info.codec_name = codec_name;
+            }
+            if let Some(codec_long_name) = stream.codec_long_name {
+                audio_info.codec_long_name = codec_long_name;
+            }
+            if let Some(sample_rate_str) = stream.sample_rate {
+                audio_info.sample_rate = sample_rate_str.parse::<i32>().unwrap_or(0);
+            }
+            if let Some(channels) = stream.channels {
+                audio_info.channels = channels;
+            }
+
+            // ストリームのビットレートがある場合、フォーマットのビットレートよりも優先
+            if let Some(bit_rate_str) = stream.bit_rate {
+                if let Ok(stream_bit_rate) = bit_rate_str.parse::<i64>() {
+                    if stream_bit_rate > 0 && audio_info.bit_rate == 0 {
+                        audio_info.bit_rate = stream_bit_rate;
+                    }
+                }
+            }
+        }
+
+        Ok(audio_info)
+    }
+
+    fn fallback_analysis(&self, audio_info: &mut AudioInfo, path: &Path) {
         // 基本的な情報を設定（実際のFFmpeg解析の代わり）
         if let Some(extension) = path.extension() {
             if let Some(ext_str) = extension.to_str() {
@@ -107,10 +295,12 @@ impl AudioProbe {
                         audio_info.bit_rate = 320000;
                     }
                     "wav" => {
+                        audio_info.codec_name = "pcm_s16le".to_string();
                         audio_info.codec_long_name = "PCM signed 16-bit little-endian".to_string();
                         audio_info.format_long_name = "WAV / WAVE (Waveform Audio)".to_string();
                         audio_info.sample_rate = 44100;
                         audio_info.channels = 2;
+                        audio_info.bit_rate = 44100 * 2 * 16; // 1411200
                     }
                     "flac" => {
                         audio_info.codec_long_name = "FLAC (Free Lossless Audio Codec)".to_string();
@@ -123,6 +313,7 @@ impl AudioProbe {
                         audio_info.format_long_name = format!("{} format", ext_str.to_uppercase());
                         audio_info.sample_rate = 44100;
                         audio_info.channels = 2;
+                        audio_info.bit_rate = 320000;
                     }
                 }
             }
@@ -136,10 +327,6 @@ impl AudioProbe {
             // デフォルトの継続時間（5分）
             audio_info.duration_seconds = 300.0;
         }
-
-        audio_info.processing_time_ms = start_time.elapsed().as_millis() as u64;
-
-        Ok(audio_info)
     }
 
     pub async fn process_files(
@@ -185,7 +372,7 @@ impl AudioProbe {
     pub fn collect_audio_files<P: AsRef<Path>>(&self, root_path: P) -> Result<Vec<PathBuf>> {
         let audio_extensions = [
             "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", "mp2", "ac3", "dts", "ape",
-            "aiff", "au", "ra", "amr",
+            "aiff", "au", "ra", "amr", "webm", "mkv", "m4b", "m4p",
         ];
 
         let mut audio_files = Vec::new();
@@ -212,12 +399,13 @@ impl Clone for AudioProbe {
         Self {
             semaphore: Arc::clone(&self.semaphore),
             max_concurrent: self.max_concurrent,
+            use_ffprobe: self.use_ffprobe,
         }
     }
 }
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(author, version = "0.2.0", about, long_about = None)]
 struct Args {
     /// 解析する音声ファイルまたはディレクトリのパス
     #[arg(value_name = "PATH")]
@@ -265,15 +453,23 @@ async fn main() -> Result<()> {
         .with_env_filter(format!("audio_probe={}", log_level))
         .init();
 
-    println!("🎵 Audio Probe - 高性能音声ファイル解析ツール (デモ版)");
-    println!("注意: この版では実際のFFmpeg解析の代わりに基本的な情報推定を行います");
+    println!("🎵 Audio Probe - 高性能音声ファイル解析ツール v0.2.0");
 
     if args.paths.is_empty() {
         eprintln!("エラー: 少なくとも1つのファイルまたはディレクトリパスを指定してください");
         std::process::exit(1);
     }
 
-    let probe = AudioProbe::new(args.max_concurrent).context("Failed to initialize AudioProbe")?;
+    let probe = AudioProbe::new(args.max_concurrent)
+        .await
+        .context("Failed to initialize AudioProbe")?;
+
+    if probe.use_ffprobe {
+        println!("FFprobeを使用して実際の音声ファイル情報を解析します");
+    } else {
+        println!("警告: FFprobeが見つかりません。基本的な情報推定を行います");
+        println!("FFmpegをインストールすることで、より正確な解析が可能になります");
+    }
 
     let mut all_files = Vec::new();
 
@@ -298,6 +494,7 @@ async fn main() -> Result<()> {
                                     let audio_extensions = [
                                         "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus",
                                         "mp2", "ac3", "dts", "ape", "aiff", "au", "ra", "amr",
+                                        "webm", "mkv", "m4b", "m4p",
                                     ];
                                     if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
                                         all_files.push(file_path);
@@ -342,6 +539,10 @@ async fn main() -> Result<()> {
         warn!("Failed to process: {}", errors.len());
     }
 
+    // 統計情報の計算
+    let total_duration: f64 = successful.iter().map(|info| info.duration_seconds).sum();
+    let total_size: u64 = successful.iter().map(|info| info.file_size).sum();
+
     // 出力
     let output_content = if args.json {
         // JSON出力
@@ -350,7 +551,9 @@ async fn main() -> Result<()> {
                 "total_files": successful.len() + errors.len(),
                 "successful": successful.len(),
                 "failed": errors.len(),
-                "processing_time_seconds": total_time.as_secs_f64()
+                "processing_time_seconds": total_time.as_secs_f64(),
+                "total_duration_seconds": total_duration,
+                "total_size_bytes": total_size,
             },
             "successful_files": successful,
             "errors": errors.iter().map(|e| e.to_string()).collect::<Vec<_>>()
@@ -363,19 +566,30 @@ async fn main() -> Result<()> {
         output.push_str(&format!("=== 音声ファイル分析結果 ===\n"));
         output.push_str(&format!("処理時間: {:.2}秒\n", total_time.as_secs_f64()));
         output.push_str(&format!(
-            "成功: {}, 失敗: {}\n\n",
+            "成功: {}, 失敗: {}\n",
             successful.len(),
             errors.len()
         ));
+        output.push_str(&format!(
+            "総継続時間: {}\n",
+            format_duration(total_duration)
+        ));
+        output.push_str(&format!("総サイズ: {}\n\n", format_bytes(total_size)));
 
         for audio_info in &successful {
             output.push_str(&format!("📁 ファイル: {:?}\n", audio_info.file_path));
-            output.push_str(&format!("   サイズ: {} bytes\n", audio_info.file_size));
             output.push_str(&format!(
-                "   継続時間: {:.2}秒\n",
-                audio_info.duration_seconds
+                "   サイズ: {}\n",
+                format_bytes(audio_info.file_size)
             ));
-            output.push_str(&format!("   ビットレート: {} bps\n", audio_info.bit_rate));
+            output.push_str(&format!(
+                "   継続時間: {}\n",
+                format_duration(audio_info.duration_seconds)
+            ));
+            output.push_str(&format!(
+                "   ビットレート: {}\n",
+                format_bitrate(audio_info.bit_rate)
+            ));
             output.push_str(&format!(
                 "   サンプルレート: {} Hz\n",
                 audio_info.sample_rate
@@ -405,7 +619,9 @@ async fn main() -> Result<()> {
             if !audio_info.metadata.is_empty() {
                 output.push_str("   メタデータ:\n");
                 for (key, value) in &audio_info.metadata {
-                    output.push_str(&format!("     {}: {}\n", key, value));
+                    if !value.is_empty() {
+                        output.push_str(&format!("     {}: {}\n", key, value));
+                    }
                 }
             }
             output.push_str("\n");
@@ -431,19 +647,61 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+
+    if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.2} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.2} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} bytes", bytes)
+    }
+}
+
+fn format_duration(seconds: f64) -> String {
+    let hours = (seconds as u64) / 3600;
+    let minutes = ((seconds as u64) % 3600) / 60;
+    let secs = (seconds as u64) % 60;
+
+    if hours > 0 {
+        format!("{}時間{}分{}秒", hours, minutes, secs)
+    } else if minutes > 0 {
+        format!("{}分{}秒", minutes, secs)
+    } else {
+        format!("{:.1}秒", seconds)
+    }
+}
+
+fn format_bitrate(bitrate: i64) -> String {
+    if bitrate >= 1_000_000 {
+        format!("{:.1} Mbps", bitrate as f64 / 1_000_000.0)
+    } else if bitrate >= 1_000 {
+        format!("{} kbps", bitrate / 1_000)
+    } else if bitrate > 0 {
+        format!("{} bps", bitrate)
+    } else {
+        "N/A".to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[tokio::test]
     async fn test_audio_probe_creation() {
-        let probe = AudioProbe::new(10);
+        let probe = AudioProbe::new(10).await;
         assert!(probe.is_ok());
     }
 
     #[tokio::test]
     async fn test_file_not_found() {
-        let probe = AudioProbe::new(1).unwrap();
+        let probe = AudioProbe::new(1).await.unwrap();
         let result = probe.analyze_file(PathBuf::from("nonexistent.mp3")).await;
         assert!(matches!(result, Err(AudioProbeError::FileNotFound { .. })));
     }
@@ -454,5 +712,28 @@ mod tests {
         let info = AudioInfo::new(path.clone());
         assert_eq!(info.file_path, path);
         assert_eq!(info.duration_seconds, 0.0);
+    }
+
+    #[test]
+    fn test_format_bytes() {
+        assert_eq!(format_bytes(512), "512 bytes");
+        assert_eq!(format_bytes(1024), "1.00 KB");
+        assert_eq!(format_bytes(1024 * 1024), "1.00 MB");
+        assert_eq!(format_bytes(1024 * 1024 * 1024), "1.00 GB");
+    }
+
+    #[test]
+    fn test_format_duration() {
+        assert_eq!(format_duration(30.0), "30.0秒");
+        assert_eq!(format_duration(90.0), "1分30秒");
+        assert_eq!(format_duration(3661.0), "1時間1分1秒");
+    }
+
+    #[test]
+    fn test_format_bitrate() {
+        assert_eq!(format_bitrate(128), "128 bps");
+        assert_eq!(format_bitrate(128000), "128 kbps");
+        assert_eq!(format_bitrate(1000000), "1.0 Mbps");
+        assert_eq!(format_bitrate(0), "N/A");
     }
 }

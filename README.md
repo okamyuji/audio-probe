@@ -1,18 +1,19 @@
 # Audio Probe - 高性能音声ファイル解析ツール
 
-Rustで実装された高性能な音声ファイル解析ツールです。FFmpegの機能を直接利用し、大量のファイルを並行処理で効率的に解析します。
+Rustで実装された高性能な音声ファイル解析ツールです。FFprobeを使用して実際の音声ファイル情報を正確に解析します。
 
 ## プロジェクト状況
 
 ✅ **完了**: プロジェクト構造とコードベース  
 ✅ **完了**: Git リポジトリ初期化とコミット  
-⚠️ **注意**: 現在はFFmpeg非依存のデモ版を提供中  
+✅ **完了**: FFprobe統合による実際のメタデータ解析  
+✅ **完了**: バージョン0.2.0リリース  
 
 ## 特徴
 
 - 🔥 **高性能**: Tokioによる非同期並行処理で最大2000ファイルを同時処理
 - 🎵 **包括的サポート**: MP3, WAV, FLAC, AAC, OGG, M4A, WMA, OPUSなど主要音声フォーマット対応
-- 🚀 **FFmpeg直接利用**: 外部プロセス不要、Rustバインディングによる高速処理（フル版）
+- 🚀 **FFprobe統合**: FFprobeを使用して実際のメタデータを正確に取得
 - 📊 **詳細分析**: コーデック情報、ビットレート、サンプルレート、メタデータ取得
 - 💾 **メモリ効率**: セマフォーによる同時実行数制御で低メモリ使用量
 - 📈 **プログレス表示**: リアルタイム進捗状況とパフォーマンス統計
@@ -72,46 +73,33 @@ cargo bench
 ### システム要件
 
 - Rust 1.70.0 以上
-- FFmpeg 6.x または 7.x 開発ライブラリ（フル版用）
+- FFmpeg/FFprobe （コマンドラインツール）
 
-### 現在のデモ版
+### FFmpeg/FFprobeのインストール
 
-現在の実装はFFmpeg非依存のデモ版で、以下の機能を提供します
+```bash
+# macOS
+brew install ffmpeg
 
-- ファイル拡張子ベースの基本情報推定
-- 並行ファイル処理のデモンストレーション
+# Ubuntu/Debian
+sudo apt update
+sudo apt install ffmpeg
+
+# Windows
+winget install ffmpeg
+# または
+# https://ffmpeg.org/download.html からダウンロード
+```
+
+### 機能
+
+バージョン0.2.0では以下の機能を提供します：
+
+- **FFprobeが利用可能な場合**: 実際の音声ファイルメタデータを正確に解析
+- **FFprobeが利用できない場合**: ファイル拡張子ベースの基本情報推定にフォールバック
+- 並行ファイル処理の高性能実装
 - CLI インターフェースの完全な動作
 - JSON/テキスト出力機能
-
-### FFmpeg フル版への移行
-
-FFmpeg統合版に移行するには、以下の手順を実行
-
-1. **FFmpeg開発ライブラリのインストール**
-
-   ```bash
-   # macOS
-   brew install ffmpeg pkg-config
-
-   # Ubuntu/Debian
-   sudo apt install ffmpeg libavformat-dev libavcodec-dev libavutil-dev pkg-config
-
-   # Windows
-   vcpkg install ffmpeg:x64-windows
-   ```
-
-2. **Cargo.tomlの更新**
-
-   ```toml
-   [dependencies]
-   # 以下の行を追加
-   rsmpeg = "0.15"
-   ```
-
-3. **main.rsのFFmpeg機能を有効化**
-
-- `probe_with_ffmpeg`関数内の実際のFFmpeg処理コードを有効化
-- デモ版の基本推定ロジックをFFmpeg解析に置き換え
 
 ## 使用方法
 
