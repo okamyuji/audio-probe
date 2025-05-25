@@ -85,7 +85,7 @@ impl AudioProbe {
         }
 
         let mut audio_info = AudioInfo::new(path.clone());
-        
+
         // ファイルサイズ取得
         if let Ok(metadata) = std::fs::metadata(&path) {
             audio_info.file_size = metadata.len();
@@ -96,7 +96,7 @@ impl AudioProbe {
             if let Some(ext_str) = extension.to_str() {
                 audio_info.format_name = ext_str.to_lowercase();
                 audio_info.codec_name = ext_str.to_lowercase();
-                
+
                 // 拡張子に基づく基本情報の推定
                 match ext_str.to_lowercase().as_str() {
                     "mp3" => {
@@ -130,33 +130,38 @@ impl AudioProbe {
 
         // ファイルサイズに基づく継続時間の推定
         if audio_info.bit_rate > 0 {
-            audio_info.duration_seconds = (audio_info.file_size * 8) as f64 / audio_info.bit_rate as f64;
+            audio_info.duration_seconds =
+                (audio_info.file_size * 8) as f64 / audio_info.bit_rate as f64;
         } else {
             // デフォルトの継続時間（5分）
             audio_info.duration_seconds = 300.0;
         }
 
         audio_info.processing_time_ms = start_time.elapsed().as_millis() as u64;
-        
+
         Ok(audio_info)
     }
 
-    pub async fn process_files(&self, paths: Vec<PathBuf>) -> Vec<Result<AudioInfo, AudioProbeError>> {
+    pub async fn process_files(
+        &self,
+        paths: Vec<PathBuf>,
+    ) -> Vec<Result<AudioInfo, AudioProbeError>> {
         let total_files = paths.len();
-        info!("Processing {} files with max {} concurrent operations", total_files, self.max_concurrent);
+        info!(
+            "Processing {} files with max {} concurrent operations",
+            total_files, self.max_concurrent
+        );
 
         let multi_progress = MultiProgress::new();
         let progress_bar = multi_progress.add(ProgressBar::new(total_files as u64));
         progress_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+                .template(
+                    "{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})",
+                )
                 .unwrap()
                 .progress_chars("#>-"),
         );
-
-        let progress_handle = tokio::spawn(async move {
-            multi_progress.join().unwrap();
-        });
 
         let results = stream::iter(paths)
             .map(|path| {
@@ -173,15 +178,14 @@ impl AudioProbe {
             .await;
 
         progress_bar.finish_with_message("Complete!");
-        let _ = progress_handle.await;
 
         results
     }
 
     pub fn collect_audio_files<P: AsRef<Path>>(&self, root_path: P) -> Result<Vec<PathBuf>> {
         let audio_extensions = [
-            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", 
-            "mp2", "ac3", "dts", "ape", "aiff", "au", "ra", "amr"
+            "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", "mp2", "ac3", "dts", "ape",
+            "aiff", "au", "ra", "amr",
         ];
 
         let mut audio_files = Vec::new();
@@ -256,7 +260,7 @@ async fn main() -> Result<()> {
     } else {
         "info"
     };
-    
+
     tracing_subscriber::fmt()
         .with_env_filter(format!("audio_probe={}", log_level))
         .init();
@@ -269,8 +273,7 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let probe = AudioProbe::new(args.max_concurrent)
-        .context("Failed to initialize AudioProbe")?;
+    let probe = AudioProbe::new(args.max_concurrent).context("Failed to initialize AudioProbe")?;
 
     let mut all_files = Vec::new();
 
@@ -280,7 +283,8 @@ async fn main() -> Result<()> {
             all_files.push(path.clone());
         } else if path.is_dir() {
             if args.recursive {
-                let collected = probe.collect_audio_files(path)
+                let collected = probe
+                    .collect_audio_files(path)
                     .with_context(|| format!("Failed to collect files from {:?}", path))?;
                 all_files.extend(collected);
             } else {
@@ -293,7 +297,7 @@ async fn main() -> Result<()> {
                                 if let Some(ext_str) = extension.to_str() {
                                     let audio_extensions = [
                                         "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus",
-                                        "mp2", "ac3", "dts", "ape", "aiff", "au", "ra", "amr"
+                                        "mp2", "ac3", "dts", "ape", "aiff", "au", "ra", "amr",
                                     ];
                                     if audio_extensions.contains(&ext_str.to_lowercase().as_str()) {
                                         all_files.push(file_path);
@@ -355,23 +359,49 @@ async fn main() -> Result<()> {
     } else {
         // 標準出力フォーマット
         let mut output = String::new();
-        
+
         output.push_str(&format!("=== 音声ファイル分析結果 ===\n"));
         output.push_str(&format!("処理時間: {:.2}秒\n", total_time.as_secs_f64()));
-        output.push_str(&format!("成功: {}, 失敗: {}\n\n", successful.len(), errors.len()));
+        output.push_str(&format!(
+            "成功: {}, 失敗: {}\n\n",
+            successful.len(),
+            errors.len()
+        ));
 
         for audio_info in &successful {
             output.push_str(&format!("📁 ファイル: {:?}\n", audio_info.file_path));
             output.push_str(&format!("   サイズ: {} bytes\n", audio_info.file_size));
-            output.push_str(&format!("   継続時間: {:.2}秒\n", audio_info.duration_seconds));
+            output.push_str(&format!(
+                "   継続時間: {:.2}秒\n",
+                audio_info.duration_seconds
+            ));
             output.push_str(&format!("   ビットレート: {} bps\n", audio_info.bit_rate));
-            output.push_str(&format!("   サンプルレート: {} Hz\n", audio_info.sample_rate));
+            output.push_str(&format!(
+                "   サンプルレート: {} Hz\n",
+                audio_info.sample_rate
+            ));
             output.push_str(&format!("   チャンネル数: {}\n", audio_info.channels));
-            output.push_str(&format!("   コーデック: {} ({})\n", audio_info.codec_name, audio_info.codec_long_name));
-            output.push_str(&format!("   フォーマット: {} ({})\n", audio_info.format_name, audio_info.format_long_name));
-            output.push_str(&format!("   動画含む: {}\n", if audio_info.has_video { "はい" } else { "いいえ" }));
-            output.push_str(&format!("   処理時間: {}ms\n", audio_info.processing_time_ms));
-            
+            output.push_str(&format!(
+                "   コーデック: {} ({})\n",
+                audio_info.codec_name, audio_info.codec_long_name
+            ));
+            output.push_str(&format!(
+                "   フォーマット: {} ({})\n",
+                audio_info.format_name, audio_info.format_long_name
+            ));
+            output.push_str(&format!(
+                "   動画含む: {}\n",
+                if audio_info.has_video {
+                    "はい"
+                } else {
+                    "いいえ"
+                }
+            ));
+            output.push_str(&format!(
+                "   処理時間: {}ms\n",
+                audio_info.processing_time_ms
+            ));
+
             if !audio_info.metadata.is_empty() {
                 output.push_str("   メタデータ:\n");
                 for (key, value) in &audio_info.metadata {
@@ -387,7 +417,7 @@ async fn main() -> Result<()> {
                 output.push_str(&format!("❌ {}\n", error));
             }
         }
-        
+
         output
     };
 

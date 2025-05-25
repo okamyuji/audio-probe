@@ -7,12 +7,12 @@ use std::time::Duration;
 
 fn benchmark_file_collection(c: &mut Criterion) {
     use walkdir::WalkDir;
-    
+
     c.bench_function("collect_audio_files", |b| {
         b.iter(|| {
             let audio_extensions = [
-                "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", 
-                "mp2", "ac3", "dts", "ape", "aiff", "au", "ra", "amr"
+                "mp3", "wav", "flac", "aac", "ogg", "m4a", "wma", "opus", "mp2", "ac3", "dts",
+                "ape", "aiff", "au", "ra", "amr",
             ];
 
             let mut audio_files = Vec::new();
@@ -31,7 +31,7 @@ fn benchmark_file_collection(c: &mut Criterion) {
                     }
                 }
             }
-            
+
             black_box(audio_files)
         })
     });
@@ -39,37 +39,35 @@ fn benchmark_file_collection(c: &mut Criterion) {
 
 fn benchmark_path_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("path_processing");
-    
+
     for file_count in [10, 100, 1000].iter() {
         let paths: Vec<PathBuf> = (0..*file_count)
             .map(|i| PathBuf::from(format!("test_audio_{}.mp3", i)))
             .collect();
-        
+
         group.throughput(Throughput::Elements(*file_count as u64));
         group.bench_with_input(
             BenchmarkId::new("path_validation", file_count),
             file_count,
             |b, &_file_count| {
                 b.iter(|| {
-                    let results: Vec<bool> = paths.iter()
-                        .map(|path| path.exists())
-                        .collect();
+                    let results: Vec<bool> = paths.iter().map(|path| path.exists()).collect();
                     black_box(results)
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 
 fn benchmark_metadata_parsing(c: &mut Criterion) {
     use std::collections::HashMap;
-    
+
     c.bench_function("metadata_creation", |b| {
         b.iter(|| {
             let mut metadata: HashMap<String, String> = HashMap::new();
-            
+
             // 典型的なメタデータを模擬
             let sample_metadata = vec![
                 ("title", "Sample Track"),
@@ -81,49 +79,53 @@ fn benchmark_metadata_parsing(c: &mut Criterion) {
                 ("albumartist", "Sample Artist"),
                 ("composer", "Sample Composer"),
             ];
-            
+
             for (key, value) in sample_metadata {
                 metadata.insert(key.to_string(), value.to_string());
             }
-            
+
             black_box(metadata)
         })
     });
 }
 
 fn benchmark_concurrent_simulation(c: &mut Criterion) {
-    use tokio::runtime::Runtime;
     use std::sync::Arc;
+    use tokio::runtime::Runtime;
     use tokio::sync::Semaphore;
-    
-    let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("concurrent_simulation");
-    
+
     for concurrency in [1, 5, 10, 25, 50].iter() {
         group.bench_with_input(
             BenchmarkId::new("semaphore_control", concurrency),
             concurrency,
             |b, &concurrency| {
-                b.to_async(&rt).iter(|| async {
-                    let semaphore = Arc::new(Semaphore::new(concurrency));
-                    let tasks: Vec<_> = (0..100).map(|_| {
-                        let sem = Arc::clone(&semaphore);
-                        tokio::spawn(async move {
-                            let _permit = sem.acquire().await.unwrap();
-                            // ファイル処理をシミュレート
-                            tokio::time::sleep(Duration::from_millis(1)).await;
-                            42
-                        })
-                    }).collect();
-                    
-                    let results: Vec<_> = futures::future::join_all(tasks).await;
-                    black_box(results)
+                b.iter_custom(|iters| {
+                    let rt = Runtime::new().unwrap();
+                    rt.block_on(async {
+                        let start = std::time::Instant::now();
+                        for _ in 0..iters {
+                            let semaphore = Arc::new(Semaphore::new(concurrency));
+                            let tasks: Vec<_> = (0..100)
+                                .map(|_| {
+                                    let sem = Arc::clone(&semaphore);
+                                    tokio::spawn(async move {
+                                        let _permit = sem.acquire().await.unwrap();
+                                        tokio::time::sleep(Duration::from_millis(1)).await;
+                                        42
+                                    })
+                                })
+                                .collect();
+                            let _results: Vec<_> = futures::future::join_all(tasks).await;
+                        }
+                        start.elapsed()
+                    })
                 })
             },
         );
     }
-    
+
     group.finish();
 }
 

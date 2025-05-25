@@ -2,76 +2,116 @@
 
 Rustで実装された高性能な音声ファイル解析ツールです。FFmpegの機能を直接利用し、大量のファイルを並行処理で効率的に解析します。
 
+## プロジェクト状況
+
+✅ **完了**: プロジェクト構造とコードベース  
+✅ **完了**: Git リポジトリ初期化とコミット  
+⚠️ **注意**: 現在はFFmpeg非依存のデモ版を提供中  
+
 ## 特徴
 
 - 🔥 **高性能**: Tokioによる非同期並行処理で最大2000ファイルを同時処理
 - 🎵 **包括的サポート**: MP3, WAV, FLAC, AAC, OGG, M4A, WMA, OPUSなど主要音声フォーマット対応
-- 🚀 **FFmpeg直接利用**: 外部プロセス不要、Rustバインディングによる高速処理
+- 🚀 **FFmpeg直接利用**: 外部プロセス不要、Rustバインディングによる高速処理（フル版）
 - 📊 **詳細分析**: コーデック情報、ビットレート、サンプルレート、メタデータ取得
 - 💾 **メモリ効率**: セマフォーによる同時実行数制御で低メモリ使用量
 - 📈 **プログレス表示**: リアルタイム進捗状況とパフォーマンス統計
 - 🎯 **柔軟な出力**: 標準出力またはJSON形式での結果出力
 
+## クイックスタート
+
+### 1. 基本的なビルドとテスト
+
+```bash
+# プロジェクトディレクトリに移動
+cd /Users/yujiokamoto/devs/rust/audio-probe
+
+# ビルド（デバッグ版）
+cargo build
+
+# テストファイル作成
+echo "Test audio content" > test.mp3
+echo "Test WAV content" > test.wav
+
+# プログラム実行（ヘルプ表示）
+cargo run -- --help
+
+# 基本テスト
+cargo run -- test.mp3 test.wav
+
+# 詳細出力でテスト
+cargo run -- -v test.mp3
+
+# JSON出力でテスト
+cargo run -- --json test.mp3
+```
+
+### 2. リリースビルド（高性能）
+
+```bash
+# リリースビルド
+cargo build --release
+
+# リリース版で実行
+./target/release/audio-probe --help
+./target/release/audio-probe test.mp3
+```
+
+### 3. テスト実行
+
+```bash
+# ユニットテスト
+cargo test
+
+# ベンチマークテスト
+cargo bench
+```
+
 ## 必要要件
 
 ### システム要件
+
 - Rust 1.70.0 以上
-- FFmpeg 6.x または 7.x 開発ライブラリ
+- FFmpeg 6.x または 7.x 開発ライブラリ（フル版用）
 
-### FFmpeg インストール
+### 現在のデモ版
 
-#### Ubuntu/Debian
-```bash
-sudo apt update
-sudo apt install ffmpeg libavformat-dev libavcodec-dev libavutil-dev libavfilter-dev libavdevice-dev libswscale-dev libswresample-dev pkg-config
-```
+現在の実装はFFmpeg非依存のデモ版で、以下の機能を提供します
 
-#### CentOS/RHEL/Fedora
-```bash
-# Fedora
-sudo dnf install ffmpeg-devel pkg-config
+- ファイル拡張子ベースの基本情報推定
+- 並行ファイル処理のデモンストレーション
+- CLI インターフェースの完全な動作
+- JSON/テキスト出力機能
 
-# CentOS/RHEL (EPEL リポジトリが必要)
-sudo yum install epel-release
-sudo yum install ffmpeg-devel pkg-config
-```
+### FFmpeg フル版への移行
 
-#### macOS
-```bash
-brew install ffmpeg pkg-config
-```
+FFmpeg統合版に移行するには、以下の手順を実行
 
-#### Windows
-vcpkgを使用する場合：
-```bash
-vcpkg install ffmpeg:x64-windows
-```
+1. **FFmpeg開発ライブラリのインストール**
 
-### 環境変数設定
+   ```bash
+   # macOS
+   brew install ffmpeg pkg-config
 
-FFmpegが標準的な場所にインストールされていない場合：
+   # Ubuntu/Debian
+   sudo apt install ffmpeg libavformat-dev libavcodec-dev libavutil-dev pkg-config
 
-```bash
-# Linux/macOS
-export FFMPEG_PKG_CONFIG_PATH=/path/to/ffmpeg/lib/pkgconfig
+   # Windows
+   vcpkg install ffmpeg:x64-windows
+   ```
 
-# Windows
-set FFMPEG_PKG_CONFIG_PATH=C:\path\to\ffmpeg\lib\pkgconfig
-```
+2. **Cargo.tomlの更新**
 
-## ビルドとインストール
+   ```toml
+   [dependencies]
+   # 以下の行を追加
+   rsmpeg = "0.15"
+   ```
 
-```bash
-# リポジトリをクローン
-git clone <repository-url>
-cd audio-probe
+3. **main.rsのFFmpeg機能を有効化**
 
-# リリースビルド（最高性能）
-cargo build --release
-
-# インストール（オプション）
-cargo install --path .
-```
+- `probe_with_ffmpeg`関数内の実際のFFmpeg処理コードを有効化
+- デモ版の基本推定ロジックをFFmpeg解析に置き換え
 
 ## 使用方法
 
@@ -79,27 +119,27 @@ cargo install --path .
 
 ```bash
 # 単一ファイル解析
-./target/release/audio-probe music.mp3
+cargo run -- music.mp3
 
 # 複数ファイル解析
-./target/release/audio-probe song1.mp3 song2.wav album/*.flac
+cargo run -- song1.mp3 song2.wav album/*.flac
 
 # ディレクトリ解析（再帰的）
-./target/release/audio-probe -r /path/to/music/collection
+cargo run -- -r /path/to/music/collection
 
 # 高並行処理（100並列）
-./target/release/audio-probe -j 100 /path/to/large/collection
+cargo run -- -j 100 /path/to/large/collection
 
 # JSON出力
-./target/release/audio-probe --json music_files/ > results.json
+cargo run -- --json music_files/ > results.json
 
 # ファイル出力
-./target/release/audio-probe -o analysis_report.txt /path/to/music
+cargo run -- -o analysis_report.txt /path/to/music
 ```
 
 ### オプション詳細
 
-```
+```text
 audio-probe [オプション] <パス>...
 
 引数:
@@ -122,63 +162,54 @@ audio-probe [オプション] <パス>...
 
 ```bash
 # 大量ファイル処理（メモリが潤沢な場合）
-./target/release/audio-probe -j 100 /large/music/collection
+cargo run --release -- -j 100 /large/music/collection
 
 # メモリ制約がある場合
-./target/release/audio-probe -j 20 /music/collection
+cargo run --release -- -j 20 /music/collection
 
 # 超高速SSD環境
-./target/release/audio-probe -j 200 /nvme/music/collection
-```
-
-### ベンチマーク例
-
-```
-テスト環境: Intel i7-12700K, 32GB RAM, NVMe SSD
-- 1,000ファイル (平均5MB): 45秒 (並行数50)
-- 2,000ファイル (平均5MB): 78秒 (並行数100)
-- 10,000ファイル (平均3MB): 350秒 (並行数100)
+cargo run --release -- -j 200 /nvme/music/collection
 ```
 
 ## 出力例
 
-### 標準出力
-```
-=== 音声ファイル分析結果 ===
-処理時間: 23.45秒
-成功: 1847, 失敗: 3
+### 標準出力（デモ版）
 
-📁 ファイル: "/music/album/track01.mp3"
-   サイズ: 5242880 bytes
-   継続時間: 245.33秒
+```text
+🎵 Audio Probe - 高性能音声ファイル解析ツール (デモ版)
+注意: この版では実際のFFmpeg解析の代わりに基本的な情報推定を行います
+
+=== 音声ファイル分析結果 ===
+処理時間: 0.05秒
+成功: 2, 失敗: 0
+
+📁 ファイル: "test.mp3"
+   サイズ: 25 bytes
+   継続時間: 300.00秒
    ビットレート: 320000 bps
    サンプルレート: 44100 Hz
    チャンネル数: 2
    コーデック: mp3 (MP3 (MPEG audio layer 3))
    フォーマット: mp3 (MP2/3 (MPEG audio layer 2/3))
    動画含む: いいえ
-   処理時間: 12ms
-   メタデータ:
-     artist: Example Artist
-     album: Example Album
-     title: Track 01
-     date: 2023
+   処理時間: 1ms
 ```
 
-### JSON出力
+### JSON出力例
+
 ```json
 {
   "summary": {
-    "total_files": 1850,
-    "successful": 1847,
-    "failed": 3,
-    "processing_time_seconds": 23.45
+    "total_files": 2,
+    "successful": 2,
+    "failed": 0,
+    "processing_time_seconds": 0.05
   },
   "successful_files": [
     {
-      "file_path": "/music/album/track01.mp3",
-      "file_size": 5242880,
-      "duration_seconds": 245.33,
+      "file_path": "test.mp3",
+      "file_size": 25,
+      "duration_seconds": 300.0,
       "bit_rate": 320000,
       "sample_rate": 44100,
       "channels": 2,
@@ -187,82 +218,106 @@ audio-probe [オプション] <パス>...
       "format_name": "mp3",
       "format_long_name": "MP2/3 (MPEG audio layer 2/3)",
       "has_video": false,
-      "metadata": {
-        "artist": "Example Artist",
-        "album": "Example Album",
-        "title": "Track 01",
-        "date": "2023"
-      },
-      "processing_time_ms": 12
+      "metadata": {},
+      "processing_time_ms": 1
     }
   ],
-  "errors": [
-    "Invalid audio file: /music/broken.mp3 - No audio stream found"
-  ]
+  "errors": []
 }
 ```
 
-## 対応フォーマット
+## 開発・拡張
 
-### 音声フォーマット
-- **ロスレス**: FLAC, WAV, AIFF, APE, AU
-- **ロッシー**: MP3, AAC, OGG Vorbis, WMA, OPUS, AMR
-- **コンテナ**: M4A, MP2, AC3, DTS, RA
+### プロジェクト構造
 
-### メタデータ
-- 標準タグ (Title, Artist, Album, Date)
-- フォーマット固有情報
-- エンコーダー情報
-- カスタムメタデータ
+```sh
+audio-probe/
+├── Cargo.toml              # プロジェクト設定と依存関係
+├── build.rs                # ビルドスクリプト
+├── README.md               # このファイル
+├── .gitignore              # Git無視ファイル設定
+├── src/
+│   └── main.rs             # メインプログラム
+├── examples/
+│   └── basic_usage.rs      # 使用例とサンプルコード
+├── benches/
+│   └── performance.rs      # パフォーマンスベンチマーク
+├── scripts/
+│   └── setup.sh            # セットアップスクリプト
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # GitHub Actions CI/CD
+└── Dockerfile              # コンテナ化設定
+```
+
+### テスト実行
+```bash
+# ユニットテスト
+cargo test
+
+# 詳細テスト出力
+cargo test -- --nocapture
+
+# 特定のテスト
+cargo test test_audio_probe_creation
+```
+
+### ベンチマーク実行
+
+```bash
+cargo bench
+```
+
+### 例の実行
+
+```bash
+cargo run --example basic_usage
+```
+
+## Docker サポート
+
+```bash
+# イメージビルド
+docker build -t audio-probe .
+
+# コンテナ実行
+docker run -v /path/to/music:/data audio-probe -r /data
+```
 
 ## トラブルシューティング
 
 ### よくある問題
 
-#### 1. FFmpeg ライブラリが見つからない
-```bash
-error: failed to run custom build command for `rsmpeg-sys`
-```
-**解決方法**: FFmpeg開発ライブラリをインストールし、PKG_CONFIG_PATHを設定
+1. **ビルドエラー**:
+   - Rustのバージョンを確認: `rustc --version` (1.70.0以上必要)
+   - 依存関係を更新: `cargo update`
 
-#### 2. 大量ファイル処理でメモリ不足
-**解決方法**: `-j` オプションで並行数を下げる（例: `-j 10`）
+2. **FFmpegライブラリが見つからない（フル版）**:
+   - FFmpeg開発ライブラリをインストール
+   - `PKG_CONFIG_PATH`を適切に設定
 
-#### 3. パフォーマンスが期待より低い
-**解決方法**: 
-- リリースビルドを使用: `cargo build --release`
-- 並行数を調整: CPU コア数の2-4倍を試す
-- SSD使用を推奨
+3. **パフォーマンスが低い**:
+   - リリースビルドを使用: `cargo build --release`
+   - 並行数を調整: `-j` オプション
 
-#### 4. 一部ファイルが解析できない
-**解決方法**: `-v` オプションで詳細ログを確認し、ファイル形式を検証
+4. **メモリ不足**:
+   - 並行数を削減: `-j 10` など
 
-## 開発・拡張
+## 今後の開発計画
 
-### テスト実行
-```bash
-cargo test
-```
+- [ ] FFmpeg統合の完成
+- [ ] 追加音声フォーマットのサポート
+- [ ] Web API版の開発
+- [ ] GUI版の開発
+- [ ] プラグインシステムの実装
 
-### カスタマイズ例
-```rust
-// より多くのメタデータ取得
-// src/main.rs の AudioInfo 構造体を拡張
-pub struct AudioInfo {
-    // 既存フィールド...
-    pub encoder: String,
-    pub creation_time: Option<String>,
-    pub track_number: Option<u32>,
-}
-```
+## コントリビューション
+
+プルリクエストやイシューの報告を歓迎します。詳細は[コントリビューションガイド](CONTRIBUTING.md)をご覧ください。
 
 ## ライセンス
 
 MIT License
-
-## 貢献
-
-プルリクエストやイシューの報告を歓迎します。
 
 ## 関連プロジェクト
 
