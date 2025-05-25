@@ -1,0 +1,69 @@
+# Rust
+/target
+Cargo.lock
+**/*.rs.bk
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Runtime
+*.pid
+*.seed
+*.pid.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Output files
+*.json
+*.txt
+*.csv
+output/
+results/
+
+# Test data
+test_data/
+sample_files/
+
+# Coverage
+tarpaulin-report.html
+coverage/
+lcov.info
+
+# Benchmarks
+criterion/
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# FFmpeg build artifacts
+ffmpeg_build/
+*.a
+*.so
+*.dll
+*.dylib
+
+# Package managers
+node_modules/

@@ -1,0 +1,60 @@
+[package]
+name = "audio-probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# CLI処理
+clap = { version = "4.0", features = ["derive"] }
+
+# 非同期ランタイム
+tokio = { version = "1.0", features = ["full"] }
+
+# 並行処理ユーティリティ
+futures = "0.3"
+
+# プログレス表示
+indicatif = { version = "0.17", features = ["tokio"] }
+
+# JSON出力サポート
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# エラーハンドリング
+anyhow = "1.0"
+thiserror = "1.0"
+
+# ファイルパス処理
+walkdir = "2.0"
+
+# ログ出力
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# 時刻処理
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+# テスト用
+tempfile = "3.0"
+tokio-test = "0.4"
+
+# ベンチマーク用
+criterion = { version = "0.5", features = ["html_reports"] }
+futures = "0.3"
+
+[[bench]]
+name = "performance"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.bench]
+debug = true
